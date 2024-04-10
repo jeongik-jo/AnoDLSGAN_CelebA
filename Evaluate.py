@@ -72,7 +72,7 @@ def evaluate_fake_rec(encoder: kr.Model, decoder: kr.Model, latent_scale_vector,
             decoder(latent_vectors * latent_scale_vector[tf.newaxis]),
             clip_value_min=-1, clip_value_max=1)
 
-        _, rec_latent_vectors = encoder(fake_images)
+        _, rec_latent_vectors, _ = encoder(fake_images)
         rec_images = tf.clip_by_value(
             decoder(rec_latent_vectors * latent_scale_vector[tf.newaxis]),
             clip_value_min=-1, clip_value_max=1)
@@ -88,7 +88,7 @@ def evaluate_real_rec(encoder: kr.Model, decoder: kr.Model, latent_scale_vector,
     average_ssim = []
     for data in id_dataset:
         real_images = data['image']
-        _, rec_latent_vectors = encoder(real_images)
+        _, rec_latent_vectors, _ = encoder(real_images)
         rec_images = tf.clip_by_value(
             decoder(rec_latent_vectors * latent_scale_vector[tf.newaxis]),
             clip_value_min=-1, clip_value_max=1)
@@ -120,7 +120,7 @@ def get_nll_ood_scores(encoder: kr.Model, latent_var_trace, id_dataset: tf.data.
     for id_data, ood_data in zip(id_dataset, ood_dataset):
         interpolate_images = ood_data['image'] * ood_intensity + id_data['image'] * (1 - ood_intensity)
         batch_size = interpolate_images.shape[0]
-        _, rec_latent_vectors = encoder(interpolate_images)
+        _, rec_latent_vectors, _ = encoder(interpolate_images)
 
         for i in range(batch_size):
             nlog_probs = -tf.math.log(tf.cast(ss.norm.pdf(rec_latent_vectors[i], scale=tf.sqrt(latent_var_trace)), 'float32'))

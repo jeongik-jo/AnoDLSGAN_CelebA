@@ -15,50 +15,60 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
     def _gan_train_step(encoder: kr.Model, encoder_optimizer: kr.optimizers.Optimizer, encoder_ema: tf.train.ExponentialMovingAverage,
                         decoder: kr.Model, decoder_optimizer: kr.optimizers.Optimizer, decoder_ema: tf.train.ExponentialMovingAverage,
                         latent_var_trace: tf.Variable, data, **kwargs):
-        with tf.GradientTape(persistent=True) as tape:
-            real_images = data['image']
-            batch_size = real_images.shape[0]
-            latent_vectors = hp.latent_dist_func(batch_size)
+        real_images = data['image']
+        batch_size = real_images.shape[0]
+        latent_vectors = hp.latent_dist_func(batch_size)
 
-            if hp.is_dls:
-                latent_scale_vector = tf.sqrt(
-                    tf.cast(hp.latent_vector_dim, dtype='float32') * latent_var_trace / tf.reduce_sum(latent_var_trace))
-            else:
-                latent_scale_vector = tf.ones([hp.latent_vector_dim])
+        if hp.is_dls:
+            latent_scale_vectors = tf.sqrt(
+                tf.cast(hp.latent_vector_dim, dtype='float32') * latent_var_trace / tf.reduce_sum(latent_var_trace))[tf.newaxis]
+        else:
+            latent_scale_vectors = tf.ones([1, hp.latent_vector_dim])
+        fake_images = decoder(latent_vectors * latent_scale_vectors)
 
+        with tf.GradientTape() as dis_tape:
             with tf.GradientTape() as reg_tape:
                 reg_tape.watch(real_images)
-                real_adv_values, _ = encoder(real_images)
+                real_adv_values, _, _ = encoder(real_images)
             reg_losses = tf.reduce_sum(tf.square(reg_tape.gradient(real_adv_values, real_images)), axis=[1, 2, 3])
+            fake_adv_values, rec_latent_vectors, rec_latent_logvars = encoder(fake_images)
 
-            fake_images = decoder(latent_vectors * latent_scale_vector[tf.newaxis])
-            fake_adv_values, rec_latent_vectors = encoder(fake_images)
+            latent_diff = tf.square((latent_vectors - rec_latent_vectors) * latent_scale_vectors)
 
-            enc_losses = tf.reduce_mean(
-                tf.square((rec_latent_vectors - latent_vectors) * latent_scale_vector[tf.newaxis]), axis=-1)
+            if hp.use_logvar:
+                enc_losses = tf.reduce_mean(rec_latent_logvars + latent_diff / (tf.exp(rec_latent_logvars) + 1e-7), axis=-1)
+            else:
+                enc_losses = tf.reduce_mean(latent_diff, axis=-1)
 
             dis_adv_losses = tf.nn.softplus(-real_adv_values) + tf.nn.softplus(fake_adv_values)
+            dis_loss = tf.reduce_mean(dis_adv_losses + hp.enc_weight * enc_losses + hp.reg_weight * reg_losses)
+
+        encoder_optimizer.minimize(dis_loss, encoder.trainable_variables, tape=dis_tape)
+        rec_latent_traces = rec_latent_vectors
+
+        with tf.GradientTape() as gen_tape:
+            latent_vectors = hp.latent_dist_func(batch_size)
+            fake_images = decoder(latent_vectors * latent_scale_vectors)
+
+            fake_adv_values, rec_latent_vectors, rec_latent_logvars = encoder(fake_images)
+            latent_diff = tf.square((latent_vectors - rec_latent_vectors) * latent_scale_vectors)
+
+            if hp.use_logvar:
+                enc_losses = tf.reduce_mean(rec_latent_logvars + latent_diff / (tf.exp(rec_latent_logvars) + 1e-7), axis=-1)
+            else:
+                enc_losses = tf.reduce_mean(latent_diff, axis=-1)
             gen_adv_losses = tf.nn.softplus(-fake_adv_values)
 
-            dis_loss = tf.reduce_mean(dis_adv_losses + hp.enc_weight * enc_losses + hp.reg_weight * reg_losses)
             gen_loss = tf.reduce_mean(gen_adv_losses + hp.enc_weight * enc_losses)
 
-        decoder_optimizer.apply_gradients(
-            zip(tape.gradient(gen_loss, decoder.trainable_variables),
-                decoder.trainable_variables)
-        )
-        encoder_optimizer.apply_gradients(
-            zip(tape.gradient(dis_loss, encoder.trainable_variables),
-                encoder.trainable_variables)
-        )
+        decoder_optimizer.minimize(gen_loss, decoder.trainable_variables, tape=gen_tape)
 
-        del tape
+        rec_latent_traces = tf.concat([rec_latent_traces, rec_latent_vectors], axis=0)
+        latent_var_trace.assign(latent_var_trace * hp.latent_var_decay_rate +
+                                tf.reduce_mean(tf.square(rec_latent_traces), axis=0) * (1.0 - hp.latent_var_decay_rate))
 
         decoder_ema.apply(decoder.trainable_variables)
         encoder_ema.apply(encoder.trainable_variables)
-
-        latent_var_trace.assign(latent_var_trace * hp.latent_var_decay_rate +
-                                tf.reduce_mean(tf.square(rec_latent_vectors), axis=0) * (1.0 - hp.latent_var_decay_rate))
 
         results = {'real_adv_values': real_adv_values, 'fake_adv_values': fake_adv_values,
                    'enc_losses': enc_losses, 'reg_losses': reg_losses}
@@ -75,16 +85,8 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
 
             rec_losses = tf.reduce_mean(tf.square(rec_images - real_images), axis=[1, 2, 3])
             rec_loss = tf.reduce_mean(rec_losses)
-        decoder_optimizer.apply_gradients(
-            zip(tape.gradient(rec_loss, decoder.trainable_variables),
-                decoder.trainable_variables)
-        )
-        encoder_optimizer.apply_gradients(
-            zip(tape.gradient(rec_loss, encoder.trainable_variables),
-                encoder.trainable_variables)
-        )
-
-        del tape
+        encoder_optimizer.minimize(rec_loss, encoder.trainable_variables, tape=tape)
+        decoder_optimizer.minimize(rec_loss, decoder.trainable_variables, tape=tape)
 
         decoder_ema.apply(decoder.trainable_variables)
         encoder_ema.apply(encoder.trainable_variables)
@@ -104,19 +106,11 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
             ce_losses = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(real_labels, predict_logits), axis=-1)
             ce_loss = tf.reduce_mean(ce_losses)
 
-        encoder_optimizer.apply_gradients(
-            zip(tape.gradient(ce_loss, encoder.trainable_variables),
-                encoder.trainable_variables)
-        )
-        svm_optimizer.apply_gradients(
-            zip(tape.gradient(ce_loss, svm.trainable_variables),
-                svm.trainable_variables)
-        )
+        encoder_optimizer.minimize(ce_loss, encoder.trainable_variables, tape=tape)
+        svm_optimizer.minimize(ce_loss, svm.trainable_variables, tape=tape)
 
-        del tape
-
-        svm_ema.apply(svm.trainable_variables)
         encoder_ema.apply(encoder.trainable_variables)
+        svm_ema.apply(svm.trainable_variables)
 
         results = {'ce_losses': ce_losses}
         return results
@@ -198,8 +192,10 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
     if hp.train_gan:
         if hp.is_dls:
             file_name += 'DLSGAN'
-        else:
+        elif hp.use_logvar:
             file_name += 'InfoGAN'
+        else:
+            file_name += 'MSEGAN'
     elif hp.train_autoencoder:
         file_name += 'Autoencoder'
     elif hp.train_classifier:

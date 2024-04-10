@@ -69,7 +69,7 @@ class Decoder(object):
             id_rec_images = []
             for id_data in id_dataset.take(hp.save_image_size // 2):
                 id_images = id_data['image'][:hp.save_image_size]
-                _, rec_latent_vectors = encoder(id_images)
+                _, rec_latent_vectors, _ = encoder(id_images)
                 rec_images = self.model(rec_latent_vectors * latent_scale_vector[tf.newaxis])
 
                 id_rec_images.append(np.vstack(id_images))
@@ -86,7 +86,7 @@ class Decoder(object):
                     for ood_intensity in hp.ood_intensities:
                         ood_images = ood_data['image'][:hp.save_image_size]
                         interpolate_images = ood_images * ood_intensity + id_images * (1 - ood_intensity)
-                        _, rec_latent_vectors = encoder(interpolate_images)
+                        _, rec_latent_vectors, _ = encoder(interpolate_images)
                         rec_images = self.model(rec_latent_vectors * latent_scale_vector[tf.newaxis])
 
                         ood_rec_images.append(np.vstack(interpolate_images))
@@ -100,8 +100,8 @@ class Decoder(object):
 class Encoder(object):
     def build_model(self):
         input_image = kr.Input([hp.image_resolution, hp.image_resolution, 3])
-        adv_value, feature_vector = Layers.Encoder()(input_image)
-        return kr.Model(input_image, [adv_value, feature_vector])
+        adv_value, latent_vector, latent_logvar = Layers.Encoder()(input_image)
+        return kr.Model(input_image, [adv_value, latent_vector, latent_logvar])
 
     def __init__(self):
         self.model = self.build_model()

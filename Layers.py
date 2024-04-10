@@ -260,8 +260,9 @@ class Encoder(kr.layers.Layer):
         feature_vector = kr.layers.Flatten()(feature_maps)
         adv_value = tf.squeeze(EqDense(units=1)(feature_vector))
         latent_vector = EqDense(units=hp.latent_vector_dim)(feature_vector)
+        latent_logvar = EqDense(units=hp.latent_vector_dim)(feature_vector)
 
-        self.model = kr.Model(input_image, [adv_value, latent_vector])
+        self.model = kr.Model(input_image, [adv_value, latent_vector, latent_logvar])
 
     def call(self, inputs, *args, **kwargs):
         return self.model(inputs, *args, **kwargs)

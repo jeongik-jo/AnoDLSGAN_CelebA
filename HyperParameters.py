@@ -8,7 +8,7 @@ weight_ema_decay_rate = 0.999
 image_resolution = 128
 train_attributes = ['Bangs', 'Black_Hair', 'Male', 'Smiling', 'Young']
 
-ood_datasets = ['coil100', 'deep_weeds', 'stl10', 'cars196', 'cassava',
+ood_datasets = ['coil100', 'deep_weeds', 'stl10', 'cassava',
                 'colorectal_histology', 'malaria', 'stanford_dogs', 'stanford_online_products']
 
 ood_intensities = [0.5, 1.0]
@@ -27,6 +27,7 @@ if train_gan:
     is_dls = True
     reg_weight = 1.0
     enc_weight = 1.0
+    use_logvar = False
     latent_var_decay_rate = 0.999
     latent_dist_func = lambda batch_size: tf.random.normal([batch_size, latent_vector_dim])
 

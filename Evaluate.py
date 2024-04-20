@@ -248,7 +248,7 @@ def evaluate_classifier(encoder: Models.Encoder, svm: Models.Svm, id_dataset, oo
     return results
 
 
-def evaluate(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, id_dataset, ood_datasets, epoch):
+def evaluate(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, id_dataset, ood_datasets):
     id_dataset = id_dataset.shuffle(1000)
     ood_datasets = {key: ood_datasets[key].shuffle(1000) for key in ood_datasets}
 

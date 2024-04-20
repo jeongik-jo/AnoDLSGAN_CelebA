@@ -7,7 +7,6 @@ import time
 import numpy as np
 import Evaluate
 import os
-import matplotlib.pyplot as plt
 
 
 def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, train_dataset, id_dataset, ood_datasets):
@@ -165,26 +164,16 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
         svm.to_ema()
 
         decoder.save_images(encoder.model, id_dataset, ood_datasets, epoch)
-        print('\nevaluating...')
-        print(datetime.datetime.now())
-        start = time.time()
-        evaluate_results = Evaluate.evaluate(encoder, decoder, svm, id_dataset, ood_datasets, epoch)
-        evaluate_results_sets.append(evaluate_results)
-        for key in evaluate_results:
-            print('%-50s:' % key, '%13.6f' % evaluate_results[key])
-        print('evaluate time: ', time.time() - start, '\n')
+
         encoder.to_train()
         decoder.to_train()
         svm.to_train()
 
-    temp_results = {}
-    for evaluate_results in evaluate_results_sets:
-        for key in evaluate_results:
-            try:
-                temp_results[key].append(evaluate_results[key])
-            except KeyError:
-                temp_results[key] = [evaluate_results[key]]
-    evaluate_results = temp_results
+    encoder.to_ema()
+    decoder.to_ema()
+    svm.to_ema()
+
+    evaluate_results = Evaluate.evaluate(encoder, decoder, svm, id_dataset, ood_datasets)
 
     if not os.path.exists('results/figures'):
         os.makedirs('results/figures')
@@ -203,14 +192,8 @@ def train(encoder: Models.Encoder, decoder: Models.Decoder, svm: Models.Svm, tra
     else:
         raise AssertionError
 
-    for key in evaluate_results:
-        np.savetxt(file_name + '_%s.txt' % key, np.array(evaluate_results[key]), fmt='%f')
-        plt.title(key)
-        plt.xlabel('Epochs')
-        plt.ylabel(key)
-        plt.plot([(i + 1) for i in range(len(evaluate_results[key]))], evaluate_results[key])
-        plt.savefig(file_name + '_%s.png' % key)
-        plt.clf()
-
-    print('total time: ', time.time() - total_start, '\n')
-
+    with open(file_name + '.txt', 'w') as file:
+        for key in evaluate_results:
+            val = np.array(evaluate_results[key])
+            print(key, ':', val)
+            file.write(key + ':' + str(val) + '\n')
